@@ -1,0 +1,45 @@
+services:
+  llm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: # ビルド時に渡す環境変数
+        CMAKE_ARGS: "-DGGML_CUDA=on"  # llama-cpp-pythonをcudaありでビルド
+    container_name: llm-container
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - models:/models  # モデルの永続化
+      - ./app:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+      - APP_ENV=${APP_ENV}
+      - NVIDIA_VISIBLE_DEVICES=all # GPUを検知できるようにする
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility 
+
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434" # ホストとコンテナのポートをマッピング
+    volumes:
+      - ollama:/root/.ollama # モデルデータを永続化
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"] # GPUを使用
+    runtime: nvidia # 必須：NVIDIA Dockerを有効化するため
+    restart: unless-stopped # 自動再起動設定
+
+volumes:
+  models:  # 名前付きボリュームの定義
+  ollama:

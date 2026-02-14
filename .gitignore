@@ -172,3 +172,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Obsidian: 個人のUI状態（差分が荒れるので無視）
+docs-llm_api/.obsidian/workspace.json
+docs-llm_api/.obsidian/cache/

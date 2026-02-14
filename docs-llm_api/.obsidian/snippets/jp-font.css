@@ -1,0 +1,11 @@
+/* Interface / Text = Meiryo, Monospace = Source Han Code JP */
+body {
+    --font-interface: 'Meiryo', 'Yu Gothic UI', sans-serif;
+    --font-text: 'Meiryo', 'Yu Mincho', serif;
+    --font-monospace: 'Source Han Code JP', 'Noto Sans Mono CJK JP', ui-monospace, monospace;
+  }
+  
+  /* 念のため、コードブロック類に monospace を適用 */
+  code, pre, .cm-inline-code {
+    font-family: var(--font-monospace) !important;
+  }

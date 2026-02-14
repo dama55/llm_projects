@@ -1,0 +1,9 @@
+{
+  "blue-topaz-theme@@color-scheme-options": "color-scheme-options-autumn-topaz",
+  "anuppuccin-theme-settings@@anuppuccin-theme-light": "ctp-rosepine-light",
+  "anuppuccin-theme-settings@@anuppuccin-theme-dark": "ctp-frappe",
+  "anuppuccin-theme-settings@@anuppuccin-light-theme-accents": "ctp-accent-light-red",
+  "blue-topaz-theme@@font-family-change-to-default": false,
+  "blue-topaz-theme@@font-text-theme": "Bookerly,'Inter', 'Segoe UI','霞鹜文楷 GB', 'LXGW WenKai', 'Segoe UI Emoji',var(--font-interface)",
+  "blue-topaz-theme@@font-family-strong": "Bookerly,'Inter', 'Segoe UI', 'LXGW WenKai Screen', 'LXGW WenKai Screen R', '霞鹜文楷 GB', 'LXGW WenKai', 'Segoe UI Emoji', var(--font-interface)"
+}

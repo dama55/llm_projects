@@ -1,45 +1,54 @@
 services:
-  llm:
+  # 1) API入口（軽い）：SSE/UI/認証/ログ/バックエンド切替など
+  gateway:
     build:
-      context: .
+      context: ./gateway          # ← 旧: context: . （ルート）から変更
       dockerfile: Dockerfile
-      args: # ビルド時に渡す環境変数
-        CMAKE_ARGS: "-DGGML_CUDA=on"  # llama-cpp-pythonをcudaありでビルド
-    container_name: llm-container
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    volumes:
-      - models:/models  # モデルの永続化
-      - ./app:/app
+    container_name: gateway
     ports:
-      - "8000:8000"
+      - "8000:8000"               # ← 旧 llm が開けていた 8000 を gateway が担当
     environment:
       - PYTHONUNBUFFERED=1
-      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
-      - APP_ENV=${APP_ENV}
-      - NVIDIA_VISIBLE_DEVICES=all # GPUを検知できるようにする
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility 
-
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    ports:
-      - "11434:11434" # ホストとコンテナのポートをマッピング
+      - VLLM_BASE_URL=http://vllm:8000     # ← gateway -> vLLM の中継先
+      - DEFAULT_MODEL=Qwen/Qwen2.5-7B-Instruct
+      # - APP_ENV=${APP_ENV}               # 必要なら残す（推論には不要）
     volumes:
-      - ollama:/root/.ollama # モデルデータを永続化
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: ["gpu"] # GPUを使用
-    runtime: nvidia # 必須：NVIDIA Dockerを有効化するため
-    restart: unless-stopped # 自動再起動設定
+      - ./gateway:/app            # (任意) 開発中にホットリロードしたい場合だけ
+    depends_on:
+      - vllm
+
+  # 2) 推論エンジン（重い）：OpenAI互換APIで待ち受ける
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    command: >
+      --model Qwen/Qwen2.5-7B-Instruct
+      --host 0.0.0.0
+      --port 8000
+    # gateway経由だけなら、外部に公開しなくてもOK（安全）
+    ports:
+      - "8001:8000"             # 直接叩いて動作確認したいなら開ける
+
+    environment:
+      # HFのPrivateモデルやレート制限回避で必要なら
+      - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACE_TOKEN}
+
+    volumes:
+      # HFモデルを毎回落とさないためのキャッシュ（おすすめ）
+      - huggingface:/root/.cache/huggingface
+      # vLLMが独自に使うキャッシュが必要なら（任意）
+      - vllm_cache:/root/.cache/vllm
+
+    # GPUをvLLMにだけ渡す（gatewayには不要）
+    # まずはこれを使うのが一番シンプル（対応していれば）
+    gpus: all
+
+    # もし gpus: all が効かない環境なら、代替として device_requests を使う
+    # device_requests:
+    #   - driver: nvidia
+    #     count: 1
+    #     capabilities: ["gpu"]
 
 volumes:
-  models:  # 名前付きボリュームの定義
-  ollama:
+  huggingface:
+  vllm_cache:

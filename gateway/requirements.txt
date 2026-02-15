@@ -1,0 +1,5 @@
+fastapi==0.115.6          # APIサーバ本体
+uvicorn==0.34.0           # ASGIサーバ（起動用）
+httpx==0.28.1             # vLLM(OpenAI互換)へHTTP中継
+Jinja2==3.1.5            # index.html を Jinja2 で返してるなら
+python-multipart==0.0.20 # ファイルアップロード等をするなら

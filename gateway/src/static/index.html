@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LLM (OpenAI Compatible Stream)</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #status { margin-top: 12px; font-weight: bold; }
+    #output { margin-top: 20px; padding: 10px; border: 1px solid #ccc; max-height: 520px; overflow-y: auto; }
+    .prompt { color: blue; font-weight: bold; white-space: pre-wrap; }
+    .response { color: green; white-space: pre-wrap; }
+    .error { color: red; white-space: pre-wrap; }
+    textarea { width: 100%; min-height: 80px; }
+    button { margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <h1>LLM Stream Output（OpenAI互換）</h1>
+
+  <form id="generate-form">
+    <label for="prompt">Prompt:</label><br/>
+    <textarea id="prompt" name="prompt" required></textarea><br/>
+    <button type="submit" id="generate-btn">Generate</button>
+    <button type="button" id="stop-btn">Stop</button>
+    <button type="button" id="clear-btn">Clear</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="output"></div>
+
+  <script>
+    // DOM要素を取得
+    const form = document.getElementById("generate-form");
+    const output = document.getElementById("output");
+    const status = document.getElementById("status");
+    const btn = document.getElementById("generate-btn");
+    const stopBtn = document.getElementById("stop-btn");
+    const clearBtn = document.getElementById("clear-btn");
+    const promptBox = document.getElementById("prompt");
+
+    // 生成中断用（fetchをabortする）
+    let aborter = null;
+
+    // 状態表示の更新
+    function setStatus(t) { status.textContent = t; }
+
+    // 画面に「prompt」「response欄」を追加し、response欄DOMを返す
+    function appendCard(prompt) {
+      const p = document.createElement("div");
+      p.className = "prompt";
+      p.textContent = `Prompt: ${prompt}`;
+      output.appendChild(p);
+
+      const r = document.createElement("div");
+      r.className = "response";
+      r.textContent = "";
+      output.appendChild(r);
+
+      output.scrollTop = output.scrollHeight;
+      return r;
+    }
+
+    // SSEは「イベントブロック」が \n\n 区切りで届くので、バッファを分割する
+    function splitSSEBlocks(buffer) {
+      const parts = buffer.split("\n\n");
+      return { blocks: parts.slice(0, -1), rest: parts[parts.length - 1] };
+    }
+
+    // SSEの1ブロックから "data:" 行だけを取り出し、連結して返す（SSE仕様）
+    function extractData(block) {
+      return block
+        .split("\n")
+        .filter(line => line.startsWith("data:"))
+        .map(line => line.slice(5).trimStart())
+        .join("\n");
+    }
+
+    // メイン処理：OpenAI互換の /v1/chat/completions を stream=true で叩く
+    async function run(prompt) {
+      // もし前の生成が走っていたら中断
+      if (aborter) aborter.abort();
+      aborter = new AbortController();
+
+      // 表示領域を作る
+      const responseEl = appendCard(prompt);
+
+      setStatus("生成中…");
+      btn.disabled = true;
+
+      // OpenAI互換のリクエストJSON（gateway側でmodel補完やsystem挿入をするので最小でもOK）
+      const body = {
+        stream: true, // ストリームで返してもらう
+        messages: [
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.7,
+        top_p: 0.9,
+        max_tokens: 512
+      };
+
+      try {
+        // fetchでPOST（EventSourceはGETしかできないので使わない）
+        const res = await fetch("/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: aborter.signal
+        });
+
+        // HTTPエラーならエラー扱い
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error(`HTTP ${res.status}: ${t}`);
+        }
+
+        // StreamのReaderを取る
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+
+        // SSEは途中で切れて届くので、文字列バッファを持つ
+        let buf = "";
+
+        while (true) {
+          // チャンクを読む
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          // bytes -> text に変換（stream:trueで途中でもデコード）
+          buf += decoder.decode(value, { stream: true });
+
+          // SSEイベント単位に分割
+          const { blocks, rest } = splitSSEBlocks(buf);
+          buf = rest;
+
+          for (const block of blocks) {
+            const data = extractData(block);
+            if (!data) continue;
+
+            // OpenAI互換の終了合図
+            if (data === "[DONE]") {
+              setStatus("完了");
+              btn.disabled = false;
+              aborter = null;
+              return;
+            }
+
+            // 通常はJSONなのでパースして delta.content を取り出す
+            try {
+              const obj = JSON.parse(data);
+              const delta = obj.choices?.[0]?.delta?.content ?? "";
+              if (delta) responseEl.textContent += delta;
+            } catch (e) {
+              // 万一JSONでないデータが混ざったら、そのまま表示（保険）
+              responseEl.textContent += data;
+            }
+
+            // 自動スクロール
+            output.scrollTop = output.scrollHeight;
+          }
+        }
+
+        // ここまで来たら一応完了扱い
+        setStatus("完了");
+      } catch (e) {
+        // 途中中断（abort）はエラー表示しない方が自然なので分ける
+        if (String(e).includes("AbortError")) {
+          setStatus("停止");
+        } else {
+          setStatus("エラー");
+          responseEl.className = "error";
+          responseEl.textContent += "\n" + String(e);
+        }
+      } finally {
+        btn.disabled = false;
+        aborter = null;
+      }
+    }
+
+    // フォーム送信（Generate）
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const prompt = promptBox.value.trim();
+      if (!prompt) return;
+      run(prompt);
+    });
+
+    // Stopボタン：進行中のfetchを中断
+    stopBtn.addEventListener("click", () => {
+      if (aborter) aborter.abort();
+      aborter = null;
+      btn.disabled = false;
+      setStatus("停止");
+    });
+
+    // Clearボタン：表示を消す
+    clearBtn.addEventListener("click", () => {
+      if (aborter) aborter.abort();
+      aborter = null;
+      output.innerHTML = "";
+      setStatus("");
+      btn.disabled = false;
+    });
+
+    // Enterで送信 / Shift+Enterで改行
+    promptBox.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>

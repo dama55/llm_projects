@@ -8,8 +8,12 @@
     body { font-family: Arial, sans-serif; margin: 20px; }
     #status { margin-top: 12px; font-weight: bold; }
     #output { margin-top: 20px; padding: 10px; border: 1px solid #ccc; max-height: 520px; overflow-y: auto; }
+    .card { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 12px; }
     .prompt { color: blue; font-weight: bold; white-space: pre-wrap; }
     .response { color: green; white-space: pre-wrap; }
+    .think-toggle { margin-top: 8px; }
+    .think-box { margin-top: 8px; padding: 8px; border: 1px solid #ddd; background: #fafafa; white-space: pre-wrap; }
+    .hidden { display: none; }
     .error { color: red; white-space: pre-wrap; }
     textarea { width: 100%; min-height: 80px; }
     button { margin-right: 8px; }
@@ -45,20 +49,43 @@
     // 状態表示の更新
     function setStatus(t) { status.textContent = t; }
 
-    // 画面に「prompt」「response欄」を追加し、response欄DOMを返す
+    // 画面に「prompt」「response欄」「think欄」を追加する
     function appendCard(prompt) {
+      const card = document.createElement("div");
+      card.className = "card";
+
       const p = document.createElement("div");
       p.className = "prompt";
       p.textContent = `Prompt: ${prompt}`;
-      output.appendChild(p);
+      card.appendChild(p);
 
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "think-toggle hidden";
+      toggle.textContent = "思考を表示";
+      card.appendChild(toggle);
+
+      const think = document.createElement("div");
+      think.className = "think-box hidden";
+      think.textContent = "";
+      card.appendChild(think);
+
+      toggle.addEventListener("click", () => {
+        const hidden = think.classList.toggle("hidden");
+        toggle.textContent = hidden ? "思考を表示" : "思考を非表示";
+      });
+      
       const r = document.createElement("div");
       r.className = "response";
       r.textContent = "";
-      output.appendChild(r);
+      card.appendChild(r);
+      
+
+
+      output.appendChild(card);
 
       output.scrollTop = output.scrollHeight;
-      return r;
+      return { responseEl: r, thinkEl: think, thinkToggleEl: toggle };
     }
 
     // SSEは「イベントブロック」が \n\n 区切りで届くので、バッファを分割する
@@ -76,6 +103,67 @@
         .join("\n");
     }
 
+    // Qwen系の <think>...</think> を「回答」「思考」に分離する
+    function createThinkSplitter() {
+      const OPEN = "<think>";
+      const CLOSE = "</think>";
+      const openKeep = OPEN.length - 1;
+      const closeKeep = CLOSE.length - 1;
+
+      return {
+        inThink: false,
+        carry: "",
+        push(chunk) {
+          this.carry += chunk;
+          let answer = "";
+          let thinking = "";
+
+          while (this.carry.length > 0) {
+            if (this.inThink) {
+              const closeIdx = this.carry.indexOf(CLOSE);
+              if (closeIdx >= 0) {
+                thinking += this.carry.slice(0, closeIdx);
+                this.carry = this.carry.slice(closeIdx + CLOSE.length);
+                this.inThink = false;
+                continue;
+              }
+              // 閉じタグの途中一致に備えて末尾だけ保持
+              const safeLen = Math.max(0, this.carry.length - closeKeep);
+              thinking += this.carry.slice(0, safeLen);
+              this.carry = this.carry.slice(safeLen);
+              break;
+            }
+
+            const openIdx = this.carry.indexOf(OPEN);
+            if (openIdx >= 0) {
+              answer += this.carry.slice(0, openIdx);
+              this.carry = this.carry.slice(openIdx + OPEN.length);
+              this.inThink = true;
+              continue;
+            }
+
+            // 開始タグの途中一致に備えて末尾だけ保持
+            const safeLen = Math.max(0, this.carry.length - openKeep);
+            answer += this.carry.slice(0, safeLen);
+            this.carry = this.carry.slice(safeLen);
+            break;
+          }
+
+          return { answer, thinking };
+        },
+        flush() {
+          // 終了時に残っている文字列をモードに応じて返す
+          const tail = this.carry;
+          this.carry = "";
+          if (this.inThink) {
+            this.inThink = false;
+            return { answer: "", thinking: tail };
+          }
+          return { answer: tail, thinking: "" };
+        }
+      };
+    }
+
     // メイン処理：OpenAI互換の /v1/chat/completions を stream=true で叩く
     async function run(prompt) {
       // もし前の生成が走っていたら中断
@@ -83,7 +171,8 @@
       aborter = new AbortController();
 
       // 表示領域を作る
-      const responseEl = appendCard(prompt);
+      const card = appendCard(prompt);
+      const responseEl = card.responseEl;
 
       setStatus("生成中…");
       btn.disabled = true;
@@ -96,8 +185,11 @@
         ],
         temperature: 0.7,
         top_p: 0.9,
-        max_tokens: 2500
+        max_tokens: 2500,
+        // ★追加：Qwen3のthinking切替（vLLMのReasoning Outputs機能）
+        // chat_template_kwargs: { enable_thinking: false },
       };
+      const thinkSplitter = createThinkSplitter();
 
       try {
         // fetchでPOST（EventSourceはGETしかできないので使わない）
@@ -139,6 +231,12 @@
 
             // OpenAI互換の終了合図
             if (data === "[DONE]") {
+              const tail = thinkSplitter.flush();
+              if (tail.answer) responseEl.textContent += tail.answer;
+              if (tail.thinking) {
+                card.thinkEl.textContent += tail.thinking;
+                card.thinkToggleEl.classList.remove("hidden");
+              }
               setStatus("完了");
               btn.disabled = false;
               aborter = null;
@@ -149,15 +247,35 @@
             try {
               const obj = JSON.parse(data);
               const delta = obj.choices?.[0]?.delta?.content ?? "";
-              if (delta) responseEl.textContent += delta;
+              if (delta) {
+                const piece = thinkSplitter.push(delta);
+                if (piece.answer) responseEl.textContent += piece.answer;
+                if (piece.thinking) {
+                  card.thinkEl.textContent += piece.thinking;
+                  card.thinkToggleEl.classList.remove("hidden");
+                }
+              }
             } catch (e) {
               // 万一JSONでないデータが混ざったら、そのまま表示（保険）
-              responseEl.textContent += data;
+              const piece = thinkSplitter.push(data);
+              if (piece.answer) responseEl.textContent += piece.answer;
+              if (piece.thinking) {
+                card.thinkEl.textContent += piece.thinking;
+                card.thinkToggleEl.classList.remove("hidden");
+              }
             }
 
             // 自動スクロール
             output.scrollTop = output.scrollHeight;
           }
+        }
+
+        // 最後の取りこぼし（think外のみ）を反映
+        const tail = thinkSplitter.flush();
+        if (tail.answer) responseEl.textContent += tail.answer;
+        if (tail.thinking) {
+          card.thinkEl.textContent += tail.thinking;
+          card.thinkToggleEl.classList.remove("hidden");
         }
 
         // ここまで来たら一応完了扱い

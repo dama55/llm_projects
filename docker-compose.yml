@@ -24,12 +24,12 @@ services:
     entrypoint: ["vllm", "serve"]
     command: >
       Qwen/Qwen3-32B-AWQ
-      --quantization awq
+      --quantization awq_marlin
       --dtype float16
       --host 0.0.0.0
       --port 8000
-      --max-model-len 7168
-      --gpu-memory-utilization 0.90
+      --max-model-len 7040
+      --gpu-memory-utilization 0.92
       --max-num-batched-tokens 1024
     # qwen2.5-32Bの日本語特化版をAWQ量子化して動かす例
     # rinna/qwen2.5-bakeneko-32b-instruct-awq

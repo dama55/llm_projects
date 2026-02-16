@@ -23,14 +23,16 @@ services:
     container_name: vllm
     entrypoint: ["vllm", "serve"]
     command: >
-      rinna/qwen2.5-bakeneko-32b-instruct-awq
-      --quantization awq_marlin
+      Qwen/Qwen3-32B-AWQ
+      --quantization awq
       --dtype float16
       --host 0.0.0.0
       --port 8000
       --max-model-len 7168
       --gpu-memory-utilization 0.90
       --max-num-batched-tokens 1024
+    # qwen2.5-32Bの日本語特化版をAWQ量子化して動かす例
+    # rinna/qwen2.5-bakeneko-32b-instruct-awq
     # 32Bモデルで4Bit量子化（AWQ）版
     # --model Qwen/Qwen2.5-32B-Instruct-AWQ
     # 軽いモデル=>かなり高速で生成できた．結構内容も良い．
